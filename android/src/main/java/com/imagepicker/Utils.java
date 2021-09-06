@@ -97,17 +97,15 @@ public class Utils {
     }
 
     public static void copyUri(Uri fromUri, Uri toUri, ContentResolver resolver) {
-        try {
-            OutputStream os = resolver.openOutputStream(toUri);
-            InputStream is = resolver.openInputStream(fromUri);
+        try (OutputStream os = resolver.openOutputStream(toUri)) {
+            try (InputStream is = resolver.openInputStream(fromUri)) {
+                byte[] buffer = new byte[8192];
+                int bytesRead;
 
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-
-            while ((bytesRead = is.read(buffer)) != -1) {
-                os.write(buffer, 0, bytesRead);
+                while ((bytesRead = is.read(buffer)) != -1) {
+                    os.write(buffer, 0, bytesRead);
+                }
             }
-
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -143,17 +141,18 @@ public class Utils {
     }
 
     public static int[] getImageDimensions(Uri uri, Context reactContext) {
-        InputStream inputStream;
-        try {
-            inputStream = reactContext.getContentResolver().openInputStream(uri);
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-            return new int[]{0, 0};
-        }
+//        InputStream inputStream;
+//        try {
+//            inputStream = reactContext.getContentResolver().openInputStream(uri);
+//        } catch (FileNotFoundException e) {
+//            e.printStackTrace();
+//            return new int[]{0, 0};
+//        }
 
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inJustDecodeBounds = true;
-        BitmapFactory.decodeStream(inputStream,null, options);
+//        BitmapFactory.decodeStream(inputStream,null, options);
+        BitmapFactory.decodeFile(uri.getEncodedPath(), options);
         return new int[]{options.outWidth, options.outHeight};
     }
 
@@ -163,27 +162,23 @@ public class Utils {
     }
 
     static String getBase64String(Uri uri, Context reactContext) {
-        InputStream inputStream;
-        try {
-            inputStream = reactContext.getContentResolver().openInputStream(uri);
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-            return null;
-        }
+        try (InputStream inputStream = reactContext.getContentResolver().openInputStream(uri)) {
+            byte[] bytes;
+            byte[] buffer = new byte[8192];
+            int bytesRead;
 
-        byte[] bytes;
-        byte[] buffer = new byte[8192];
-        int bytesRead;
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        try {
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                output.write(buffer, 0, bytesRead);
+            try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                    output.write(buffer, 0, bytesRead);
+                }
+                bytes = output.toByteArray();
+
+                return Base64.encodeToString(bytes, Base64.NO_WRAP);
             }
-        } catch (IOException e) {
-            e.printStackTrace();
+        } catch (Exception ex) {
+            ex.printStackTrace();
         }
-        bytes = output.toByteArray();
-        return Base64.encodeToString(bytes, Base64.NO_WRAP);
+        return null;
     }
 
     // Resize image
@@ -198,18 +193,28 @@ public class Utils {
 
             int[] newDimens = getImageDimensBasedOnConstraints(origDimens[0], origDimens[1], options);
 
-            InputStream imageStream = context.getContentResolver().openInputStream(uri);
+            BitmapFactory.Options bitmapOptions = new BitmapFactory.Options();
+            bitmapOptions.inScaled = true;
+            bitmapOptions.inSampleSize = 4;
+            bitmapOptions.inDensity = origDimens[0];
+            bitmapOptions.inTargetDensity =  newDimens[0] * bitmapOptions.inSampleSize;
+
+// will load & resize the image to be 1/inSampleSize dimensions
+            Bitmap b = BitmapFactory.decodeFile(uri.getEncodedPath(), bitmapOptions);
+
+//            InputStream imageStream = context.getContentResolver().openInputStream(uri);
             String mimeType =  getMimeTypeFromFileUri(uri);
-            Bitmap b = BitmapFactory.decodeStream(imageStream);
-            b = Bitmap.createScaledBitmap(b, newDimens[0], newDimens[1], true);
+//            Bitmap b = BitmapFactory.decodeStream(imageStream);
+//            b = Bitmap.createScaledBitmap(b, newDimens[0], newDimens[1], true);
             String originalOrientation = getOrientation(uri, context);
-
+//
             File file = createFile(context, getFileTypeFromMime(mimeType));
-            OutputStream os = context.getContentResolver().openOutputStream(Uri.fromFile(file));
-            b.compress(getBitmapCompressFormat(mimeType), options.quality, os);
-            setOrientation(file, originalOrientation, context);
-            return Uri.fromFile(file);
+            try (OutputStream os = context.getContentResolver().openOutputStream(Uri.fromFile(file))) {
+                b.compress(getBitmapCompressFormat(mimeType), options.quality, os);
+                setOrientation(file, originalOrientation, context);
+            }
 
+            return Uri.fromFile(file);
         } catch (Exception e) {
             e.printStackTrace();
             return  null;
@@ -217,8 +222,10 @@ public class Utils {
     }
 
     static String getOrientation(Uri uri, Context context) throws IOException {
-        ExifInterface exifInterface = new ExifInterface(context.getContentResolver().openInputStream(uri));
-        return exifInterface.getAttribute(ExifInterface.TAG_ORIENTATION);
+        try (InputStream is = context.getContentResolver().openInputStream(uri)) {
+            ExifInterface exifInterface = new ExifInterface(is);
+            return exifInterface.getAttribute(ExifInterface.TAG_ORIENTATION);
+        }
     }
 
     // ExifInterface.saveAttributes is costly operation so don't set exif for unnecessary orientations
